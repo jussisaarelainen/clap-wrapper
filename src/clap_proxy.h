@@ -103,6 +103,22 @@ class IHost
   {
   }
 
+  // clap.note-ports, host side. Only a wrapper that returns true from
+  // supports_host_note_ports() offers the extension to the plugin: the dialects
+  // tell it what its note output may send (asked at activate), so a wrapper that
+  // can pass MIDI 2.0 on to its host says so here. Defaulted, as above.
+  virtual bool supports_host_note_ports() const
+  {
+    return false;
+  }
+  virtual uint32_t host_note_ports_supported_dialects()
+  {
+    return CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
+  }
+  virtual void host_note_ports_rescan(uint32_t /*flags*/)
+  {
+  }
+
   // context menu
 
   // actually, everything here should be virtual only, but until all wrappers are updated,
@@ -311,6 +327,18 @@ class Plugin
   const clap_wrapper_standalone_features_t *standalone_features()
   {
     return _parentHost->standalone_features();
+  }
+  bool supports_host_note_ports() const
+  {
+    return _parentHost->supports_host_note_ports();
+  }
+  uint32_t host_note_ports_supported_dialects()
+  {
+    return _parentHost->host_note_ports_supported_dialects();
+  }
+  void host_note_ports_rescan(uint32_t flags)
+  {
+    _parentHost->host_note_ports_rescan(flags);
   }
 
   // clap_timer support

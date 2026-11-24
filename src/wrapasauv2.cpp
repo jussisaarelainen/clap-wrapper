@@ -1402,7 +1402,7 @@ OSStatus WrapAsAUV2::SetProperty(AudioUnitPropertyID inID, AudioUnitScope inScop
       }
       case kAudioUnitProperty_HostMIDIProtocol:
         if (inDataSize < sizeof(SInt32)) return kAudioUnitErr_InvalidPropertyValue;
-        _host_midi_protocol = static_cast<MIDIProtocolID>(*static_cast<const SInt32 *>(inData));
+        _host_midi_protocol = *static_cast<const SInt32 *>(inData);
         return noErr;
         break;
 #else
@@ -1922,6 +1922,14 @@ OSStatus WrapAsAUV2::Render(AudioUnitRenderActionFlags &inFlags, const AudioTime
     // continuous array of float buffers for the VST process function
 
     auto it_is = _plugin->AlwaysAudioThread();
+
+#if AUSDK_MIDI2_AVAILABLE
+    // the event lists in the protocol the host takes them in this time
+    {
+      const MIDIProtocolID umpProtocol = midi2Output() ? kMIDIProtocol_2_0 : kMIDIProtocol_1_0;
+      for (auto &i : _midi_outports) i->setUMPProtocol(umpProtocol);
+    }
+#endif
 
     _processAdapter->process(data);
 
@@ -2994,21 +3002,16 @@ void WrapAsAUV2::send(const Clap::AUv2::clap_multi_event_t &event)
     break;
     case CLAP_EVENT_MIDI2:
     {
-      // A plugin emitting raw UMP is rare. Down-convert MIDI 2.0 channel-voice
-      // to MIDI 1.0 and route through the normal output; this works for both the
-      // legacy callback and the UMP EventList path (which the framework then
-      // up-converts to the host's negotiated protocol).
-      uint8_t bytes[3];
-      if (ClapWrapper::detail::shared::midi2ChannelVoiceToMidi1(event.midi2.data, bytes) > 0)
+      // Unchanged to a host that takes MIDI 2.0 event lists (the plugin sends
+      // MIDI 2.0 when host_note_ports_supported_dialects() offered it); else
+      // converted down to MIDI 1.0, for the legacy callback and a MIDI 1.0 list.
+      auto portid = event.midi2.port_index;
+      for (auto &i : _midi_outports)
       {
-        auto portid = event.midi2.port_index;
-        for (auto &i : _midi_outports)
+        if (i->_info.id == portid)
         {
-          if (i->_info.id == portid)
-          {
-            i->addMIDI3Byte(bytes);
-            break;
-          }
+          i->addMIDI2(event.midi2.data);
+          break;
         }
       }
     }

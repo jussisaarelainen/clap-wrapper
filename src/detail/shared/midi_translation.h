@@ -144,6 +144,85 @@ inline int midi2ChannelVoiceToMidi1(const uint32_t data[4], uint8_t out[3])
   }
 }
 
+// Scale a value up from srcBits to dstBits (dstBits <= 32) as the MIDI 2.0 spec's
+// translation does ("min-center-max"): the minimum, the center and the maximum
+// stay the minimum, the center and the maximum.
+inline uint32_t midiScaleUp(uint32_t value, uint32_t srcBits, uint32_t dstBits)
+{
+  const uint32_t scaleBits = dstBits - srcBits;
+  uint32_t bitShifted = value << scaleBits;
+  const uint32_t srcCenter = 1u << (srcBits - 1);
+  if (value <= srcCenter) return bitShifted;
+
+  // above the center: repeat the value's bits below its top bit into the new low bits
+  const uint32_t repeatBits = srcBits - 1;
+  const uint32_t repeatMask = (1u << repeatBits) - 1;
+  uint32_t repeatValue = value & repeatMask;
+  if (scaleBits > repeatBits)
+    repeatValue <<= scaleBits - repeatBits;
+  else
+    repeatValue >>= repeatBits - scaleBits;
+  while (repeatValue != 0)
+  {
+    bitShifted |= repeatValue;
+    repeatValue >>= repeatBits;
+  }
+  return bitShifted;
+}
+
+// Up-convert a MIDI 1.0 channel-voice message (status incl. channel, data1, data2)
+// to a MIDI 2.0 channel-voice UMP message (MT 0x4, group 0, two words), as the
+// MIDI 2.0 spec's default translation: values scaled up (7->16 velocity, 7->32,
+// 14->32), a note-on with velocity 0 as a note-off. Control changes are passed
+// one by one (RPN/NRPN sequences are not merged). Returns false if not convertible.
+inline bool midi1ToMidi2ChannelVoice(uint8_t status, uint8_t data1, uint8_t data2, uint32_t out[2])
+{
+  uint8_t type = status & 0xF0u;
+  const uint8_t channel = status & 0x0Fu;
+  data1 &= 0x7Fu;
+  data2 &= 0x7Fu;
+  uint32_t index = data1;
+  uint32_t value = 0;
+
+  switch (type)
+  {
+    case 0x90:
+      if (data2 == 0)
+      {
+        type = 0x80;
+        value = 0;  // a MIDI 1.0 note-off by velocity 0 has no release velocity
+        break;
+      }
+      value = midiScaleUp(data2, 7, 16) << 16;
+      break;
+    case 0x80:
+      value = midiScaleUp(data2, 7, 16) << 16;
+      break;
+    case 0xA0:  // poly pressure
+    case 0xB0:  // control change
+      value = midiScaleUp(data2, 7, 32);
+      break;
+    case 0xC0:  // program change, no bank
+      index = 0;
+      value = static_cast<uint32_t>(data1) << 24;
+      break;
+    case 0xD0:  // channel pressure
+      index = 0;
+      value = midiScaleUp(data1, 7, 32);
+      break;
+    case 0xE0:  // pitch bend
+      index = 0;
+      value = midiScaleUp(static_cast<uint32_t>(data1) | (static_cast<uint32_t>(data2) << 7), 14, 32);
+      break;
+    default:
+      return false;
+  }
+
+  out[0] = (0x4u << 28) | (static_cast<uint32_t>(type | channel) << 16) | (index << 8);
+  out[1] = value;
+  return true;
+}
+
 // Down-convert a CLAP note-expression event to a single MIDI 1.0 channel-voice
 // message: PRESSURE with a key maps to polyphonic key pressure (0xA0), channel-wide
 // PRESSURE (key < 0) to channel pressure (0xD0), and TUNING to pitch bend (0xE0,

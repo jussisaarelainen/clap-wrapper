@@ -17,6 +17,7 @@
 #include <AudioUnitSDK/AUBase.h>
 #include <CoreMIDI/CoreMIDI.h>
 #include "auv2_shared.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <iostream>
@@ -178,16 +179,29 @@ class MIDIOutput
     return _midiPacketList;
   }
 #if AUSDK_MIDI2_AVAILABLE
-  // parallel Universal MIDI Packet view of the same events (protocol 1.0 / MT 0x2);
-  // the framework converts to the host's negotiated protocol on delivery.
+  // parallel Universal MIDI Packet view of the same events, in the protocol the
+  // host asked for (kAudioUnitProperty_HostMIDIProtocol): MIDI 1.0 (MT 0x2), or
+  // MIDI 2.0 (MT 0x4), where a plugin's MIDI 2.0 passes unchanged and its MIDI 1.0
+  // is converted up. The legacy packet list always has MIDI 1.0.
   MIDIEventList *getMIDIEventList()
   {
     return _umpList;
+  }
+  // the event list's protocol, from the next event on; set between render calls,
+  // while the list is empty
+  void setUMPProtocol(MIDIProtocolID protocol);
+  bool hasUMPEvents() const
+  {
+    return _numUMPEvents != 0;
   }
 #endif
   bool addNoteOn(uint8_t channel, uint8_t note, uint8_t velocity);
   bool addNoteOff(uint8_t channel, uint8_t note, uint8_t velocity);
   bool addMIDI3Byte(const uint8_t *threebytes);
+  // a CLAP_EVENT_MIDI2 message: unchanged in a MIDI 2.0 event list, else converted
+  // down to MIDI 1.0 (or dropped where MIDI 1.0 has no form for it, such as
+  // per-note pitch bend)
+  bool addMIDI2(const uint32_t data[4]);
   bool addSysEx(const uint8_t *data, uint32_t size);
 
   void clear();
@@ -200,8 +214,21 @@ class MIDIOutput
 
  private:
 #if AUSDK_MIDI2_AVAILABLE
-  // wrap a MIDI 1.0 channel-voice message into one MT 0x2 UMP word
+  // a MIDI 1.0 channel-voice message as one MT 0x2 UMP word, or as an MT 0x4
+  // message in a MIDI 2.0 list
   void appendUMP1(uint8_t status, uint8_t data1, uint8_t data2)
+  {
+    if (_umpProtocol == kMIDIProtocol_2_0)
+    {
+      uint32_t words[2];
+      if (ClapWrapper::detail::shared::midi1ToMidi2ChannelVoice(status, data1, data2, words))
+        appendUMPWords(words, 2);
+      return;
+    }
+    uint32_t word = ClapWrapper::detail::shared::midi1ToUmpWord(status, data1, data2);
+    appendUMPWords(&word, 1);
+  }
+  void appendUMPWords(const uint32_t *words, uint32_t count)
   {
     // _umpCurrent is null when running on macOS < 11 (the list is never
     // initialized there) and once the list is full (MIDIEventListAdd returns
@@ -209,8 +236,8 @@ class MIDIOutput
     if (!_umpCurrent) return;
     if (__builtin_available(macOS 11.0, *))
     {
-      uint32_t word = ClapWrapper::detail::shared::midi1ToUmpWord(status, data1, data2);
-      _umpCurrent = MIDIEventListAdd(_umpList, sizeof(_umpBuffer), _umpCurrent, 0, 1, &word);
+      _umpCurrent = MIDIEventListAdd(_umpList, sizeof(_umpBuffer), _umpCurrent, 0, count, words);
+      if (_umpCurrent) ++_numUMPEvents;
     }
   }
   // pack a SysEx payload (0xF0/0xF7 framing stripped) into MT 0x3 SysEx7 packets
@@ -225,6 +252,8 @@ class MIDIOutput
   MIDIEventPacket *_umpCurrent = nullptr;
   MIDIEventList *_umpList = nullptr;
   uint8_t _umpBuffer[2048];
+  MIDIProtocolID _umpProtocol = kMIDIProtocol_1_0;
+  uint32_t _numUMPEvents = 0;
 #endif
 };
 
@@ -249,12 +278,25 @@ void MIDIOutput::clear()
   _current = MIDIPacketListInit(_midiPacketList);
   _numEvents = 0;
 #if AUSDK_MIDI2_AVAILABLE
+  _numUMPEvents = 0;
   if (__builtin_available(macOS 11.0, *))
   {
-    if (_umpList) _umpCurrent = MIDIEventListInit(_umpList, kMIDIProtocol_1_0);
+    if (_umpList) _umpCurrent = MIDIEventListInit(_umpList, _umpProtocol);
   }
 #endif
 }
+
+#if AUSDK_MIDI2_AVAILABLE
+void MIDIOutput::setUMPProtocol(MIDIProtocolID protocol)
+{
+  if (protocol == _umpProtocol) return;
+  _umpProtocol = protocol;
+  if (__builtin_available(macOS 11.0, *))
+  {
+    if (_umpList && _numUMPEvents == 0) _umpCurrent = MIDIEventListInit(_umpList, _umpProtocol);
+  }
+}
+#endif
 
 bool MIDIOutput::addNoteOn(uint8_t channel, uint8_t note, uint8_t velocity)
 {
@@ -312,6 +354,28 @@ bool MIDIOutput::addMIDI3Byte(const uint8_t *threebytes)
 
   ++_numEvents;
   return (_current != nullptr);
+}
+
+bool MIDIOutput::addMIDI2(const uint32_t data[4])
+{
+  uint8_t bytes[3];
+  const int midi1Size = ClapWrapper::detail::shared::midi2ChannelVoiceToMidi1(data, bytes);
+#if AUSDK_MIDI2_AVAILABLE
+  if (_umpProtocol == kMIDIProtocol_2_0)
+  {
+    // the message as it is, and its MIDI 1.0 form for the legacy packet list
+    const uint32_t count = std::min<uint32_t>(ClapWrapper::detail::shared::umpMessageWordCount(data[0]), 4);
+    appendUMPWords(data, count);
+    if (midi1Size > 0 && _current)
+    {
+      _current = MIDIPacketListAdd(_midiPacketList, sizeof(_buffer), _current, 0, midi1Size, bytes);
+    }
+    ++_numEvents;
+    return (_current != nullptr);
+  }
+#endif
+  if (midi1Size == 0) return false;
+  return addMIDI3Byte(bytes);
 }
 
 bool MIDIOutput::addSysEx(const uint8_t *data, uint32_t size)
@@ -822,6 +886,30 @@ class WrapAsAUV2 : public ausdk::AUBase,
   void pushQueuedEventsToHost();
 
   // context menu extension
+  // clap.note-ports, host side: the plugin may send MIDI 2.0 when the host takes
+  // its output as MIDI 2.0 event lists (it set kAudioUnitProperty_HostMIDIProtocol
+  // to 2.0 and gave kAudioUnitProperty_MIDIOutputEventListCallback). Asked by the
+  // plugin at activate, so a host that sets them later gets MIDI 1.0 from the
+  // plugin, converted up.
+  bool supports_host_note_ports() const override
+  {
+    return true;
+  }
+  uint32_t host_note_ports_supported_dialects() override
+  {
+    uint32_t dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
+#if AUSDK_MIDI2_AVAILABLE
+    if (midi2Output()) dialects |= CLAP_NOTE_DIALECT_MIDI2;
+#endif
+    return dialects;
+  }
+#if AUSDK_MIDI2_AVAILABLE
+  bool midi2Output() const
+  {
+    return _host_midi_protocol.load() == kMIDIProtocol_2_0 && _midioutput_hosteventlistblock.load() != nullptr;
+  }
+#endif
+
   bool supportsContextMenu() const override
   {
     return false;
@@ -1030,7 +1118,8 @@ class WrapAsAUV2 : public ausdk::AUBase,
   // feet, and drained in deactivateCLAP()/~WrapAsAUV2 when no render can run.
   std::atomic<AUMIDIEventListBlock> _midioutput_hosteventlistblock{nullptr};
   std::vector<AUMIDIEventListBlock> _retiredEventListBlocks;
-  MIDIProtocolID _host_midi_protocol = kMIDIProtocol_1_0;
+  // the protocol the host asked for its MIDI output (kAudioUnitProperty_HostMIDIProtocol)
+  std::atomic<SInt32> _host_midi_protocol{kMIDIProtocol_1_0};
 #endif
 
   // ARA: the instance may be bound to a document controller only once

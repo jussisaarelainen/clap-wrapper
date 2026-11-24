@@ -158,6 +158,12 @@ const clap_host_preset_load_t preset_load = {
     [](const clap_host_t *host, uint32_t location_kind, const char *location,
        const char *load_key) -> void { self(host)->preset_loaded(location_kind, location, load_key); }};
 
+const clap_host_note_ports_t note_ports = {
+    /* supported_dialects */
+    [](const clap_host_t *host) -> uint32_t { return self(host)->host_note_ports_supported_dialects(); },
+    /* rescan */
+    [](const clap_host_t *host, uint32_t flags) -> void { self(host)->host_note_ports_rescan(flags); }};
+
 }  // namespace HostExt
 
 std::shared_ptr<Plugin> Plugin::createInstance(const clap_plugin_factory *factory, const std::string &id,
@@ -599,6 +605,8 @@ const void *Plugin::clapExtension(const clap_host *host, const char *extension)
   if (!strcmp(extension, CLAP_EXT_CONTEXT_MENU)) return &HostExt::context_menu;
   if (!strcmp(extension, CLAP_EXT_PRESET_LOAD) || !strcmp(extension, CLAP_EXT_PRESET_LOAD_COMPAT))
     return &HostExt::preset_load;
+  if (!strcmp(extension, CLAP_EXT_NOTE_PORTS) && HostExt::self(host)->supports_host_note_ports())
+    return &HostExt::note_ports;
   if (!strcmp(extension, CLAP_WRAPPER_HOST_INFORMATION)) return &HostExt::wrapper_host_information;
   if (!strcmp(extension, CLAP_WRAPPER_STANDALONE_FEATURES))
     return HostExt::self(host)->standalone_features();
