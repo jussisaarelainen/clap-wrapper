@@ -315,12 +315,19 @@ void ProcessAdapter::process(Steinberg::Vst::ProcessData &data)
 
         if (param->isMidi)
         {
+          // Every point of the block, each at its sample: a host gives a controller's changes within a block as
+          // points, as it would have sent the MIDI. Rounded: the host's normalized value of a 7- or 14-bit value
+          // (value / 127, value / 16383) can be a little below it, and truncating turned 8192 into 8191.
           auto nums = k->getPointCount();
 
-          Vst::ParamValue value;
-          int32 offset;
-          if (k->getPoint(nums - 1, offset, value) == kResultOk)
+          for (int32 point = 0; point < nums; ++point)
           {
+            Vst::ParamValue value;
+            int32 offset;
+            if (k->getPoint(point, offset, value) != kResultOk) continue;
+
+            const auto plain = static_cast<int32_t>(std::lround(param->asClapValue(value)));
+
             // create MIDI event
             clap_multi_event_t n;
             n.param.header.type = CLAP_EVENT_MIDI;
@@ -334,12 +341,12 @@ void ProcessAdapter::process(Steinberg::Vst::ProcessData &data)
             {
               case Vst::ControllerNumbers::kAfterTouch:
                 n.midi.data[0] = 0xD0 | param->channel;
-                n.midi.data[1] = param->asClapValue(value);
+                n.midi.data[1] = static_cast<uint8_t>(std::clamp(plain, 0, 127));
                 n.midi.data[2] = 0;
                 break;
               case Vst::ControllerNumbers::kPitchBend:
               {
-                auto val = (uint16_t)param->asClapValue(value);
+                auto val = static_cast<uint16_t>(std::clamp(plain, 0, 16383));
                 n.midi.data[0] = 0xE0 | param->channel;  // $Ec
                 n.midi.data[1] = (val & 0x7F);           // LSB
                 n.midi.data[2] = (val >> 7) & 0x7F;      // MSB
@@ -347,7 +354,7 @@ void ProcessAdapter::process(Steinberg::Vst::ProcessData &data)
               break;
               case Vst::ControllerNumbers::kCtrlProgramChange:
               {
-                auto val = (uint16_t)param->asClapValue(value);
+                auto val = static_cast<uint16_t>(std::clamp(plain, 0, 127));
                 n.midi.data[0] = 0xC0 | param->channel;  // $Cc
                 n.midi.data[1] = (val & 0x7F);           // only one byte
                 n.midi.data[2] = 0;
@@ -356,7 +363,7 @@ void ProcessAdapter::process(Steinberg::Vst::ProcessData &data)
               default:
                 n.midi.data[0] = 0xB0 | param->channel;
                 n.midi.data[1] = param->controller;
-                n.midi.data[2] = param->asClapValue(value);
+                n.midi.data[2] = static_cast<uint8_t>(std::clamp(plain, 0, 127));
                 break;
             }
 
@@ -610,15 +617,23 @@ void ProcessAdapter::processInputEvents(Steinberg::Vst::IEventList *eventlist)
           n.noteexpression.header.time = vstevent.sampleOffset;
           n.noteexpression.header.size = sizeof(clap_event_note_expression);
           n.noteexpression.note_id = vstevent.polyPressure.noteId;
-          for (auto &i : _activeNotes)
+          n.noteexpression.expression_id = CLAP_NOTE_EXPRESSION_PRESSURE;
+          n.noteexpression.value = vstevent.polyPressure.pressure;
+          // The event's own key and channel; a note id (hosts may send -1, no id) finds the note's port
+          n.noteexpression.port_index = 0;
+          n.noteexpression.key = vstevent.polyPressure.pitch;
+          n.noteexpression.channel = vstevent.polyPressure.channel;
+          if (vstevent.polyPressure.noteId != -1)
           {
-            if (i.used && i.note_id == vstevent.polyPressure.noteId)
+            for (auto &i : _activeNotes)
             {
-              n.noteexpression.expression_id = CLAP_NOTE_EXPRESSION_PRESSURE;
-              n.noteexpression.port_index = i.port_index;
-              n.noteexpression.key = i.key;  // should be the same as vstevent.polyPressure.pitch
-              n.noteexpression.channel = i.channel;
-              n.noteexpression.value = vstevent.polyPressure.pressure;
+              if (i.used && i.note_id == vstevent.polyPressure.noteId)
+              {
+                n.noteexpression.port_index = i.port_index;
+                n.noteexpression.key = i.key;  // should be the same as vstevent.polyPressure.pitch
+                n.noteexpression.channel = i.channel;
+                break;
+              }
             }
           }
           _eventindices.push_back(_events.size());
@@ -635,19 +650,23 @@ void ProcessAdapter::processInputEvents(Steinberg::Vst::IEventList *eventlist)
           n.param.header.size = sizeof(clap_event_midi_t);
           n.midi.port_index = 0;
           n.midi.data[0] = 0xA0 + vstevent.polyPressure.channel;
-          int key{-1};
-          for (auto &i : _activeNotes)
+          // The event's own key; by its note id if it has one (hosts may send -1, no id)
+          int key{vstevent.polyPressure.pitch};
+          if (vstevent.polyPressure.noteId != -1)
           {
-            if (i.used && i.note_id == vstevent.polyPressure.noteId)
+            for (auto &i : _activeNotes)
             {
-              key = i.key;
-              break;
+              if (i.used && i.note_id == vstevent.polyPressure.noteId)
+              {
+                key = i.key;
+                break;
+              }
             }
           }
           if (key >= 0)
           {
             n.midi.data[1] = key;
-            n.midi.data[2] = vstevent.polyPressure.pressure * 127.0;
+            n.midi.data[2] = static_cast<uint8_t>(std::clamp(std::lround(vstevent.polyPressure.pressure * 127.0), 0L, 127L));
 
             _eventindices.push_back(_events.size());
             _events.push_back(n);
