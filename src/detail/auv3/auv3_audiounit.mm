@@ -2124,7 +2124,11 @@ static const char *const _windowApi = CLAP_WINDOW_API_COCOA;
 
   if (_impl && _impl->_plugin && _impl->_plugin->_ext._state)
   {
+    // A JUCE AUv3's state (JUCE_STATE_DICTIONARY_KEY) when there's no CLAP one: a plug-in that replaces a JUCE
+    // AUv3 with the same component description reads its sessions (as the AUv2 wrapper's jucePluginState)
     NSData *clapState = fullState[@"clapState"];
+    if (!clapState && [fullState[@"jucePluginState"] isKindOfClass:[NSData class]])
+      clapState = fullState[@"jucePluginState"];
     if (clapState)
     {
       AUV3LOG("setFullState (restore): loading %zu bytes of CLAP state", (size_t)[clapState length]);
