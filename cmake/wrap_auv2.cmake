@@ -219,6 +219,19 @@ function(target_add_auv2_wrapper)
     # is a placeholder. When we write it we will follow a similar
     # split trick as for the vst3, mostly (but AUV2 is a bit different
     # with info.plist and entrypoint-per-instance stuff)
+    set(auv2_wrapper_sources
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/os/macos.mm
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/wrapasauv2.cpp
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv2/auv2_shared.mm
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv2/process.cpp
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv2/wrappedview.mm
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv2/parameter.cpp)
+
+    # The wrapper's warnings (and -Werror) on the wrapper's own sources only: the target may hold the plugin's
+    # code too (a clap linked into the component), which the wrapper's options aren't for
+    set_source_files_properties(${auv2_wrapper_sources} PROPERTIES
+            COMPILE_OPTIONS "$<TARGET_PROPERTY:clap-wrapper-compile-options,INTERFACE_COMPILE_OPTIONS>")
+
     target_sources(${AUV2_TARGET} PRIVATE
             ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/wrapasauv2.cpp
             ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv2/auv2_shared.h
@@ -248,7 +261,8 @@ function(target_add_auv2_wrapper)
         target_link_libraries(${AUV2_TARGET}-clap-wrapper-auv2-lib INTERFACE clap base-sdk-auv2)
 
         # clap-wrapper-extensions are PUBLIC, so a clap linking the library can access the clap-wrapper-extensions
-        target_link_libraries(${AUV2_TARGET}-clap-wrapper-auv2-lib INTERFACE clap-wrapper-extensions clap-wrapper-shared-detail clap-wrapper-compile-options)
+        # clap-wrapper-compile-options only on the wrapper's sources (auv2_wrapper_sources), not through the interface
+        target_link_libraries(${AUV2_TARGET}-clap-wrapper-auv2-lib INTERFACE clap-wrapper-extensions clap-wrapper-shared-detail)
 
     endif ()
 
