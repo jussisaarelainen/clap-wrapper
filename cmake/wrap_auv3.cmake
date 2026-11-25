@@ -332,6 +332,19 @@ function(target_add_auv3_wrapper)
 
     target_sources(${AUV3_TARGET} PRIVATE ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/os/macos.mm)
 
+    set(auv3_wrapper_sources
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/os/macos.mm
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/wrapasauv3.mm
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv3/auv3_audiounit.mm
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv3/auv3_parameters.mm
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv3/auv3_channellayout.mm
+            ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv3/process.mm)
+
+    # The wrapper's warnings (and -Werror) on the wrapper's own sources only, as the AUv2's: the target holds the
+    # plugin's code too (a clap linked into the appex, which iOS requires), which the wrapper's options aren't for
+    set_source_files_properties(${auv3_wrapper_sources} PROPERTIES
+            COMPILE_OPTIONS "$<TARGET_PROPERTY:clap-wrapper-compile-options,INTERFACE_COMPILE_OPTIONS>")
+
     target_sources(${AUV3_TARGET} PRIVATE
             ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/wrapasauv3.mm
             ${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src/detail/auv3/auv3_audiounit.mm
@@ -357,7 +370,8 @@ function(target_add_auv3_wrapper)
         add_library(${AUV3_TARGET}-clap-wrapper-auv3-lib INTERFACE)
         target_include_directories(${AUV3_TARGET}-clap-wrapper-auv3-lib INTERFACE "${bhtgoutdir}" "${CLAP_WRAPPER_CMAKE_CURRENT_SOURCE_DIR}/src")
         target_link_libraries(${AUV3_TARGET}-clap-wrapper-auv3-lib INTERFACE clap)
-        target_link_libraries(${AUV3_TARGET}-clap-wrapper-auv3-lib INTERFACE clap-wrapper-extensions clap-wrapper-shared-detail clap-wrapper-compile-options)
+        # clap-wrapper-compile-options only on the wrapper's sources (auv3_wrapper_sources), not through the interface
+        target_link_libraries(${AUV3_TARGET}-clap-wrapper-auv3-lib INTERFACE clap-wrapper-extensions clap-wrapper-shared-detail)
     endif ()
 
     set_target_properties(${AUV3_TARGET} PROPERTIES
