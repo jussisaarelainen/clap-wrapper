@@ -980,30 +980,13 @@ void WrapAsAUV2::Cleanup()
 {
   LOGINFO("[clap-wrapper] Cleaning up Plugin");
   auto guarantee_mainthread = _plugin->AlwaysMainThread();
-  // The editor is AppKit's, so it is destroyed here on the main thread only. A
-  // host may uninitialize from another thread (an out-of-process AU host does
-  // when its application quits); removing the view there throws in AppKit. Nor
-  // can this wait for the main thread: the SDK holds _mainThreadMutex across
-  // this call and the view takes it there. The editor stays open - a plugin
-  // that is not active may keep its GUI - until its view goes or the instance
-  // is destroyed, which both close it on the main thread.
-  if (this->_uiIsOpened && !auv2shared_mm_is_main_thread())
-  {
-    LOGINFO("[clap-wrapper] UI still open, uninitialized off the main thread: left to its view");
-  }
-  else if (this->_uiIsOpened)
-  {
-    LOGINFO("[clap-wrapper] !! UI still open, destroying UI and disconnecting view");
-    if (_uiconn._canary)
-    {
-      *_uiconn._canary = 0;       // reset the canary
-      _uiconn._canary = nullptr;  // and disconnect it
-      if (_plugin->_plugin && _plugin->_ext._gui)
-      {
-        this->_uiconn._destroyWindow();
-      }
-    }
-  }
+  // The editor stays open: a CLAP may keep its GUI while it is deactivated, and
+  // an AU is uninitialized with its view on screen (a host changing the sample
+  // rate or the stream format, or bypassing an AU without a bypass property,
+  // initializes it again). Destroying the GUI here left the host's window empty,
+  // as nothing creates it again for the same view. The editor is destroyed with
+  // its view (removed from its window, or deallocated) or with the instance, on
+  // the main thread there.
   deactivateCLAP();
   releaseHostMIDIOutput();
   Base::Cleanup();
