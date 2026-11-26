@@ -698,6 +698,19 @@ void ProcessAdapter::addMIDIEvent(UInt32 inStatus, UInt32 inData1, UInt32 inData
       this->_events.emplace_back(n);
       break;
     case 0xF:
+      // System common and real-time messages (MIDI clock, start, stop, song position...): raw MIDI, as the
+      // other messages CLAP has no typed event for. SysEx (0xF0) comes through MusicDeviceSysEx instead.
+      if (inStatus != 0xF0 && inStatus != 0xF7)
+      {
+        n.header.type = CLAP_EVENT_MIDI;
+        n.header.size = sizeof(clap_event_midi_t);
+        n.midi.port_index = 0;
+        n.midi.data[0] = static_cast<uint8_t>(inStatus);
+        n.midi.data[1] = static_cast<uint8_t>(inData1);
+        n.midi.data[2] = static_cast<uint8_t>(inData2);
+        this->_eventindices.emplace_back((this->_events.size()));
+        this->_events.emplace_back(n);
+      }
       break;
   }
 }

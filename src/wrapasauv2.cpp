@@ -2918,7 +2918,7 @@ void WrapAsAUV2::send(const Clap::AUv2::clap_multi_event_t &event)
       {
         if (i->_info.id == portid)
         {
-          i->addNoteOn(event.note.channel, event.note.key, event.note.velocity * 127.f);
+          i->addNoteOn(event.note.channel, event.note.key, event.note.velocity * 127.f, event.header.time);
           break;
         }
       }
@@ -2931,7 +2931,7 @@ void WrapAsAUV2::send(const Clap::AUv2::clap_multi_event_t &event)
       {
         if (i->_info.id == portid)
         {
-          i->addNoteOff(event.note.channel, event.note.key, event.note.velocity * 127.f);
+          i->addNoteOff(event.note.channel, event.note.key, event.note.velocity * 127.f, event.header.time);
           break;
         }
       }
@@ -2944,7 +2944,7 @@ void WrapAsAUV2::send(const Clap::AUv2::clap_multi_event_t &event)
       {
         if (i->_info.id == portid)
         {
-          i->addMIDI3Byte(event.midi.data);
+          i->addMIDI3Byte(event.midi.data, event.header.time);
           break;
         }
       }
@@ -2962,7 +2962,7 @@ void WrapAsAUV2::send(const Clap::AUv2::clap_multi_event_t &event)
         {
           if (i->_info.id == portid)
           {
-            i->addMIDI3Byte(bytes);
+            i->addMIDI3Byte(bytes, event.header.time);
             break;
           }
         }
@@ -2977,7 +2977,7 @@ void WrapAsAUV2::send(const Clap::AUv2::clap_multi_event_t &event)
       {
         if (i->_info.id == portid)
         {
-          i->addSysEx(sx.buffer, sx.size);
+          i->addSysEx(sx.buffer, sx.size, event.header.time);
           break;
         }
       }
@@ -2993,7 +2993,7 @@ void WrapAsAUV2::send(const Clap::AUv2::clap_multi_event_t &event)
       {
         if (i->_info.id == portid)
         {
-          i->addMIDI2(event.midi2.data);
+          i->addMIDI2(event.midi2.data, event.header.time);
           break;
         }
       }
