@@ -1841,8 +1841,20 @@ static const char *const _windowApi = CLAP_WINDOW_API_COCOA;
 // Sample rate for time-based properties. A CLAP with no audio output ports
 // (note effect → aumi) has an empty output bus array, and indexing it raises
 // NSRangeException — fall back to the input side, then to 0 ("unknown").
+//
+// On iOS a MIDI processor (aumi) runs at the audio session's rate: a host
+// such as Logic Pro for iPad never sets the format of a MIDI effect's busses,
+// which keep their 44.1 kHz default while the device renders at 48 kHz, and
+// a plugin timing its MIDI by that rate drifts against the host's beat.
 - (double)_busSampleRate
 {
+#if TARGET_OS_IPHONE
+  if (self.componentDescription.componentType == kAudioUnitType_MIDIProcessor)
+  {
+    const double sessionRate = [AVAudioSession sharedInstance].sampleRate;
+    if (sessionRate > 0) return sessionRate;
+  }
+#endif
   if (self.outputBusses.count > 0) return self.outputBusses[0].format.sampleRate;
   if (self.inputBusses.count > 0) return self.inputBusses[0].format.sampleRate;
   return 0;
@@ -2193,16 +2205,10 @@ static const char *const _windowApi = CLAP_WINDOW_API_COCOA;
     return NO;
   }
 
-  // Get sample rate from output bus format
-  double sampleRate = 44100.0;
-  if (self.outputBusses.count > 0)
-  {
-    sampleRate = self.outputBusses[0].format.sampleRate;
-  }
-  else if (self.inputBusses.count > 0)
-  {
-    sampleRate = self.inputBusses[0].format.sampleRate;
-  }
+  // The sample rate: the busses' format (the session's for an iOS MIDI
+  // processor, see _busSampleRate), 44.1 kHz when there's none
+  double sampleRate = [self _busSampleRate];
+  if (sampleRate <= 0) sampleRate = 44100.0;
   AUV3LOG("allocateRenderResources: sampleRate=%.0f maxFrames=%u", sampleRate,
           (unsigned)self.maximumFramesToRender);
 
